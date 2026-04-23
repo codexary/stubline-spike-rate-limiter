@@ -70,7 +70,11 @@ public final class RateLimitDemo {
                     URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/orders"))
                 .header("X-Client-Id", "demo")
                 .build();
-        int status = client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+        var response = client.send(request, HttpResponse.BodyHandlers.discarding());
+        int status = response.statusCode();
+        if (status == 429)
+          System.out.println(
+              "Retry-After=" + response.headers().firstValue("Retry-After").orElse("missing"));
         if (status == 200) ok++;
         if (status == 429) limited++;
       }

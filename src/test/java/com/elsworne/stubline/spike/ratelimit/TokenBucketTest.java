@@ -8,34 +8,50 @@ import org.junit.jupiter.api.Test;
 
 class TokenBucketTest {
   @Test
-  void controlledClockRefillsExactlyAndCapsBurstWithoutOverflow() {
-    for (int kind = 0; kind < 2; kind++) {
-      var clock = new AtomicLong();
-      TokenBucket bucket =
-          kind == 0
-              ? Buckets.synchronizedBucket(3, 10, clock::get)
-              : Buckets.lockFree(3, 10, clock::get);
-      for (int i = 0; i < 3; i++) assertTrue(bucket.tryAcquire());
-      assertFalse(bucket.tryAcquire());
-      clock.addAndGet(100_000_000L);
-      assertTrue(bucket.tryAcquire());
-      assertFalse(bucket.tryAcquire());
-      clock.set(Long.MAX_VALUE);
-      for (int i = 0; i < 3; i++) assertTrue(bucket.tryAcquire());
-      assertFalse(bucket.tryAcquire());
-    }
+  void synchronizedBucketRefillsAtControlledClock() {
+    var clock = new AtomicLong();
+    assertRefill(Buckets.synchronizedBucket(3, 10, clock::get), clock);
   }
 
   @Test
-  void safeImplementationsStayWithinCapacityAndUnsafeRaceIsDemonstrable() throws Exception {
-    int capacity = 5;
+  void lockFreeBucketRefillsAtControlledClock() {
+    var clock = new AtomicLong();
+    assertRefill(Buckets.lockFree(3, 10, clock::get), clock);
+  }
+
+  private static void assertRefill(TokenBucket bucket) {
+    for (int i = 0; i < 3; i++) assertTrue(bucket.tryAcquire());
+    assertFalse(bucket.tryAcquire());
+  }
+
+  private static void assertRefill(TokenBucket bucket, AtomicLong clock) {
+    assertRefill(bucket);
+    clock.addAndGet(100_000_000L);
+    assertTrue(bucket.tryAcquire());
+    assertFalse(bucket.tryAcquire());
+    clock.set(Long.MAX_VALUE);
+    for (int i = 0; i < 3; i++) assertTrue(bucket.tryAcquire());
+    assertFalse(bucket.tryAcquire());
+  }
+
+  @Test
+  void synchronizedBucketNeverOverAdmits() throws Exception {
     LongSupplier frozen = () -> 0;
-    assertEquals(
-        capacity, ConcurrencyHarness.admitted(Buckets.synchronizedBucket(capacity, 1, frozen), 32));
-    assertEquals(capacity, ConcurrencyHarness.admitted(Buckets.lockFree(capacity, 1, frozen), 32));
+    assertEquals(5, ConcurrencyHarness.admitted(Buckets.synchronizedBucket(5, 1, frozen), 32));
+  }
+
+  @Test
+  void lockFreeBucketNeverOverAdmits() throws Exception {
+    LongSupplier frozen = () -> 0;
+    assertEquals(5, ConcurrencyHarness.admitted(Buckets.lockFree(5, 1, frozen), 32));
+  }
+
+  @Test
+  void unsafeBucketOverAdmitsWithinBoundedRounds() throws Exception {
+    LongSupplier frozen = () -> 0;
     boolean observed = false;
     for (int round = 0; round < 100 && !observed; round++)
-      observed = ConcurrencyHarness.admitted(Buckets.unsafe(capacity, 1, frozen), 32) > capacity;
-    assertTrue(observed, "Unsafe race should appear within the bounded demonstration");
+      observed = ConcurrencyHarness.admitted(Buckets.unsafe(5, 1, frozen), 32) > 5;
+    assertTrue(observed);
   }
 }
